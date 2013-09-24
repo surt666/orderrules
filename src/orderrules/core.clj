@@ -10,6 +10,8 @@
 (fact needs :youbio nil)
 
 (defrel canstart fo neededfostatus)
+(fact canstart :clear nil)
+(fact canstart :youbio nil)
 (fact canstart :bb :aktiv)
 (fact canstart :bb :kunsignal)
 (fact canstart :dtv :aktiv)
@@ -29,11 +31,9 @@
                 [(== needed nil)])
                (needs (:a o) needed)
                (hdok (handlingsdato<today? (:hd o)))
-               (conde
-                [(canstart (:a o) status)]
-                [(== needed nil)]))))
+               (canstart (:a o) status))))
 
-(def o {:a :dtv :hd "11-09-2013"})
+(def o {:a :youbio :hd "11-09-2013"})
 
 (def l [{:s :aktiv :a :clear}])
 
