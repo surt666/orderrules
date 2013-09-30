@@ -24,17 +24,17 @@
 (fact canstart :tlf :aktiv)
 (fact canstart :tlf :kunsignal)
 
-(defrel hwstatusok fo status)
-(fact hwstatusok :clear nil)
-(fact hwstatusok :bb :sent)
-(fact hwstatusok :bb :received)
-(fact hwstatusok :tlf :sent)
-(fact hwstatusok :tlf :received)
+;; (defrel hwstatusok fo status)
+;; (fact hwstatusok :clear nil)
+;; (fact hwstatusok :bb :sent)
+;; (fact hwstatusok :bb :received)
+;; (fact hwstatusok :tlf :sent)
+;; (fact hwstatusok :tlf :received)
 
-(defrel teknikerok fo status)
-(fact teknikerok :clear :done)
-(fact teknikerok :bb :done)
-(fact teknikerok :tlf :done)
+;; (defrel teknikerok fo status)
+;; (fact teknikerok :clear :done)
+;; (fact teknikerok :bb :done)
+;; (fact teknikerok :tlf :done)
 
 (defrel hdok val)
 (fact hdok true)
@@ -54,10 +54,11 @@
 (fact handlingsdato :bb :skift 10 false true)
 (fact handlingsdato :bb :skift 10 true true)
 (fact handlingsdato :bb :skift 3 true false)
-(fact handlingsdato :bb :opsig :last-day-next-month false false)
-(fact handlingsdato :bb :opsig :last-day-next-month false true)
-(fact handlingsdato :bb :opsig :last-day-next-month true true)
-(fact handlingsdato :bb :opsig :last-day-next-month true false)
+(fact handlingsdato :bb :opsig 0 false false)
+(fact handlingsdato :dtv :opret 0 false false)
+(fact handlingsdato :dtv :opret 3 true false)
+(fact handlingsdato :dtv :skift 0 false false)
+(fact handlingsdato :dtv :opsig :first-day-next-month false false)
 
 (defn handlingsdato-ok? [o]
   (let [hdt (f/parse custom-formatter (:hd o))
@@ -67,14 +68,15 @@
         res (first (run 1 [q]
                          (handlingsdato (:a o) (:h o) q (:hw o) (:tek o))))
         tid (cond
-              (= res :last-day-next-month) (c/last-day-of-the-month (c/plus nu (c/months 1)))
-              :default (c/minus dt (c/days res)))]
+             (= res :last-day-next-month) (c/last-day-of-the-month (c/plus nu (c/months 1)))
+             (= res :first-day-next-month) (c/first-day-of-the-month (c/plus (l/local-now) (c/months 1)))
+             :default (c/minus dt (c/days res)))]
     (if (c/after? nu tid)
       [true tid]
       [false tid])))
 
-(defn create-subscription? [o al]
-  (= '(_0) (run* [q]
+(defn change-subscription? [o al]
+  (= '(_0) (run 1 [q]
          (fresh [needed status]
                 (conde
                  [(membero {:a needed :s status} al)]
@@ -83,8 +85,8 @@
                 (hdok (get (handlingsdato-ok? o) 0))
                 (canstart (:a o) status)))))
 
-(def o {:a :bb :hd "30-09-2013" :od "01-09-2013" :h :opret :hw false :tek true})
+(def o {:a :bb :hd "25-09-2013" :od "01-09-2013" :h :opsig :hw false :tek false})
 
-(def l [{:s :aktiv :a :clear}])
+(def l [{:s :aktiv :a :clear} {:s :lukket :a :bb}])
 
-(create-subscription? o l)
+(change-subscription? o l)
