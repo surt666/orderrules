@@ -75,7 +75,7 @@
       [true tid]
       [false tid])))
 
-(defn change-subscription? [o al]
+(defn provision-subscription? [o al]
   (= '(_0) (run 1 [q]
          (fresh [needed status]
                 (conde
@@ -89,4 +89,4 @@
 
 (def l [{:s :aktiv :a :clear} {:s :lukket :a :bb}])
 
-(change-subscription? o l)
+(provision-subscription? o l)
