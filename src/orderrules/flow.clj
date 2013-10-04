@@ -1,144 +1,260 @@
 (ns orderrules.flow
-  (:require [clojure.core.async :refer :all]))
+  (:use orderrules.core)
+  (:require [clojure.core.async :refer :all]
+            [clj-time.core :as c]
+            [clj-time.format :as f]
+            [clj-time.local :as l]))
 
 (declare ordre)
 (declare abonnementer)
 
-(defn step [stepfn c kundeid ordrer abonnementer]
-  (go
-   (let [val (apply stepfn [kundeid ordrer abonnementer])]
-     (println "V1" val)
-     (>! c val)))
-  (go
-   (let [val (<! c)]
-     (println "V2" val)
-     val)))
+(defn step! [stepfn kundeid ordrer abonnementer]
+  (let [val (apply stepfn [kundeid ordrer abonnementer])]
+    val))
+
+(defn strip-abons
+  "Strip everything not needed for logic model"
+  [abons]
+  (mapv #(assoc {} :aftaletype (:aftaletype %) :status (:status %)) abons))
+
+(defn provisioner [ordre]
+  (prn "provisioner " (:varenr ordre))
+  (let [abon (first (filter #(= (:varenr ordre) (:varenr %)) @abonnementer))
+        abons (filter #(not= (:varenr ordre) (:varenr %)) @abonnementer)]
+    (reset! abonnementer (conj abons (assoc abon :status "kunsignal")))
+    :ok))
+
+(defn can-activate? [o abons]
+  (let [abon (when o (first (filter #(= (:varenr o) (:varenr %)) abons)))
+        nu (l/local-now)
+        hd (when (:handlingsdato o) (f/parse custom-formatter (:handlingsdato o)))]
+    (and abon  (= "kunsignal" (:status abon)) (:handlingsdato o) (c/after? nu hd))))
+
+(defn aktiver [ordre]
+  (prn "aktiver " (:varenr ordre))
+  (let [abon (first (filter #(= (:varenr ordre) (:varenr %)) @abonnementer))
+        abons (filter #(not= (:varenr ordre) (:varenr %)) @abonnementer)]
+    (reset! abonnementer (conj abons (assoc abon :status "aktiv")))
+    :ok))
+
+(defn aktiver-ordre [o abons]
+  (if (can-activate? o abons)
+    (aktiver o)
+    :done))
+
+(defn bestil-hw [ordre]
+  (prn "bestil hw " (:varenr ordre))
+  (swap! abonnementer (fn [a] (conj a {:varenr (:varenr ordre) :aftaletype (:aftaletype ordre) :pg-type (:pg-type ordre) :hw true} )))
+  :ok)
+
+(defn fakturer-ydelse [ordre]
+  (prn "fakturer ydelse " (:varenr ordre))
+  (swap! abonnementer (fn [a] (conj a {:varenr (:varenr ordre) :aftaletype (:aftaletype ordre) :pg-type (:pg-type ordre) :faktureret true})))
+  :ok)
+
+(defn bestil-hw-ordre [ordre abons]
+  (let [can-provision? (when ordre (provision-subscription? ordre (strip-abons abons)))
+        ydelse (first (filter #(= (:varenr ordre) (:varenr %)) abons))]
+    (if (and can-provision? (:hw ordre) (nil? ydelse))
+      (bestil-hw ordre)
+      :done)))
+
+(defn fakturer-ydelse-ordre [ordre abons]
+  (let [nu (l/local-now)
+        hd (when (:handlingsdato ordre) (f/parse custom-formatter (:handlingsdato ordre)))
+        ydelse (first (filter #(= (:varenr ordre) (:varenr %)) abons))
+        ga-abon (first (filter #(and (= "ga" (:pg-type %)) (= (:aftaletype ordre) (:aftaletype %)) (= (:varenr %) "1401009")) abons))] ;;TODO find GA fra ordre uden hardkodning
+    (if (and (:handlingsdato ordre) (c/after? nu hd) (or (= "aktiv" (:status ga-abon)) (= "kunsignal" (:status ga-abon))) (or (nil? ydelse) (and ydelse (not (:faktureret ydelse))))) ;;TODO faktureret gemmes bare som abon i test. Not the way
+      (fakturer-ydelse ordre)
+      :done)))
+
+(defn provisioner-ordre [ordre abons]
+  (let [can-provision? (when ordre (provision-subscription? ordre (strip-abons abons)))
+        abon (first (filter #(= (:varenr ordre) (:varenr %)) abons))]
+    ;(when (= (:aftaletype ordre) "bb") (prn abon can-provision? abons ordre))
+    (if (and ordre can-provision? (not (nil? abon)) (not= "aktiv" (:status abon)) (not= "kunsignal" (:status abon)))
+      (provisioner ordre)
+      :done)))
 
 (defn extract-order [ordrer aftaletype pg-type]
   (let [o (first (filter #(and (= aftaletype (:aftaletype %)) (= pg-type (:pg-type %))) ordrer))
         hw (not (empty? (filter #(and (= aftaletype (:aftaletype %)) (:hw %)) ordrer)))
         tekniker (not (empty? (filter #(and (= aftaletype (:aftaletype %)) (:tekniker %)) ordrer)))]
-    (assoc o :hw hw :tekniker tekniker)))
+    (when o (assoc o :hw hw :tekniker tekniker))))
 
-(defn extract-abonnement [abonnementer aftaletype pg-type]
-  (filter #(and (= aftaletype (:aftaletype %)) (= pg-type (:pg-type %))) abonnementer))
+(defn extract-abonnement [abons aftaletype pg-type & [varenr]]
+  (if varenr
+    (filter #(and (= aftaletype (:aftaletype %)) (= pg-type (:pg-type %)) (= varenr (:varenr %))) abons)
+    (filter #(and (= aftaletype (:aftaletype %)) (= pg-type (:pg-type %))) abons)))
 
-(defn create-ga-afventer [item]
-  (let [orig-size (count @abonnementer)]
-    (swap! abonnementer (fn [a] (conj a item)))
-    (if (< orig-size (count @abonnementer))
-      :ok
+(defn create-ga-afventer [ordre]
+  (let [orig-size (count @abonnementer)
+        o {:status "afventer", :varenr (:varenr ordre), :abonnementsid "20002101", :pg-type "ga", :aftaletype (:aftaletype ordre)}]
+    (if (empty? (filter #(= (:varenr %) (:varenr o)) @abonnementer))
+      (do
+        (prn "opret ga afventer " (:varenr ordre))
+        (swap! abonnementer (fn [a] (conj a o)))
+        :ok)
       :done)))
 
-(defn opret-clear-abon-ga-afventer-step [kundeid ordrer abonnementer]
-  (prn "clear ga")
+(defn skift-ga [o ga-abon]
+  (prn "skift ga " (:varenr o))
+  (let [abon (assoc ga-abon :varenr (:varenr o))
+        abons (filter #(not= (:varenr %) (:varenr ga-abon)) @abonnementer)]
+    (reset! abonnementer (conj abons abon))
+    :ok))
+
+(defn create-ga-afventer-ordre [ga-abon ordre]
+  (if (and ordre (empty? ga-abon) (= "OPRET" (:handling ordre)))
+      (create-ga-afventer ordre)
+      :done))
+
+(defn opret-clear-abon-ga-afventer-step [kundeid ordrer abons]
   (Thread/sleep (rand-int 1000))
-  (let [o (extract-order ordrer :clear :ga)]
-    (if (and o (empty? (extract-abonnement abonnementer :clear :ga)))
-      (create-ga-afventer o)
+  (let [o (extract-order ordrer "clear" "ga")
+        ga-abon (extract-abonnement abons "clear" "ga" (:varenr o))]
+    (create-ga-afventer-ordre ga-abon o)))
+
+(defn opret-bb-abon-ga-afventer-step [kundeid ordrer abons]
+  (Thread/sleep (rand-int 1000))
+  (let [o (extract-order ordrer "bb" "ga")
+        ga-abon (extract-abonnement abons "bb" "ga" (:varenr o))]
+    (create-ga-afventer-ordre ga-abon o)))
+
+(defn opret-tlf-abon-ga-afventer-step [kundeid ordrer abons]
+  (Thread/sleep (rand-int 1000))
+  (let [o (extract-order ordrer "tlf" "ga")
+        ga-abon (extract-abonnement abons "tlf" "ga" (:varenr o))]
+    (create-ga-afventer-ordre ga-abon o)))
+
+(defn skift-tlf-ga-abon-step [kundeid ordrer abons]
+  (Thread/sleep (rand-int 1000))
+  (let [o (extract-order ordrer "tlf" "ga")
+        ga-abon (first (extract-abonnement abons "tlf" "ga"))
+        can-provision? (when o (provision-subscription? o (strip-abons abons)))]
+    (if (and o ga-abon (= "SKIFT" (:handling o)) (not= (:varenr o) (:varenr ga-abon)) can-provision?)
+      (do
+      ;  (provisioner o)
+        (skift-ga o ga-abon))
       :done)))
 
-(defn opret-bb-abon-ga-afventer-step [kundeid ordrer abonnementer]
-  (prn "bb")
+(defn provisioner-bb-ga-abon-step [kundeid ordrer abons]
   (Thread/sleep (rand-int 1000))
-  (let [o (extract-order ordrer :bb :ga)]
-    (if (and o (empty? (extract-abonnement abonnementer :bb :ga)))
-      (create-ga-afventer o)
-      :done)))
+  (let [o (extract-order ordrer "bb" "ga")]
+    (provisioner-ordre o abons)))
 
-(defn opret-tlf-abon-ga-afventer-step [kundeid ordrer abonnementer]
-  (prn "tlf")
+(defn provisioner-tlf-ga-abon-step [kundeid ordrer abons]
   (Thread/sleep (rand-int 1000))
-  (let [o (extract-order ordrer :tlf :ga)]
-    (if (and o (empty? (extract-abonnement abonnementer :tlf :ga)))
-      (create-ga-afventer o)
-      :done)))
+  (let [o (extract-order ordrer "tlf" "ga")]
+    (provisioner-ordre o abons)))
 
-(defn skift-tlf-abon-step [kundeid ordrer abonnementer]
-  (prn "tlf")
-  (Thread/sleep (rand-int 1000))
-  :done)
+(defn aktiver-clear-abon-ga-step [kundeid ordrer abons]
+  (let [o (extract-order ordrer "clear" "ga")]
+    (aktiver-ordre o abons)))
 
-(defn provisioner-bb-abon-step [kundeid ordrer abonnementer]
-  (prn "bbp")
-  (Thread/sleep (rand-int 1000))
-  :done)
+(defn aktiver-bb-abon-ga-step [kundeid ordrer abons]
+  (let [o (extract-order ordrer "bb" "ga")]
+    (aktiver-ordre o abons)))
 
-(defn provisioner-tlf-abon-step [kundeid ordrer abonnementer]
-  (prn "tlfp")
-  (Thread/sleep (rand-int 1000))
-  :done)
+(defn aktiver-tlf-abon-ga-step [kundeid ordrer abons]
+  (let [o (extract-order ordrer "tlf" "ga")]
+    (aktiver-ordre o abons)))
 
-(def all-steps [opret-bb-abon-ga-afventer-step opret-clear-abon-ga-afventer-step opret-tlf-abon-ga-afventer-step provisioner-bb-abon-step provisioner-tlf-abon-step skift-tlf-abon-step])
+(defn opret-bb-ky-hw [kundeid ordrer abons]
+  (let [o (extract-order ordrer "bb" "ky")]
+    (bestil-hw-ordre o abons)))
+
+(defn opret-tlf-ky-hw [kundeid ordrer abons]
+  (let [o (extract-order ordrer "tlf" "ky")]
+    (bestil-hw-ordre o abons)))
+
+(defn opret-tlf-ky-fakturering [kundeid ordrer abons]
+  (let [o (extract-order ordrer "tlf" "ky")]
+    (fakturer-ydelse-ordre o abons)))
+
+(def all-steps [opret-bb-abon-ga-afventer-step opret-clear-abon-ga-afventer-step opret-tlf-abon-ga-afventer-step provisioner-bb-ga-abon-step provisioner-tlf-ga-abon-step skift-tlf-ga-abon-step aktiver-clear-abon-ga-step aktiver-bb-abon-ga-step aktiver-tlf-abon-ga-step opret-tlf-ky-hw opret-tlf-ky-fakturering opret-bb-ky-hw])
 
 (defn find-kunde-ordrer [kundeid]
-  [ordre])
+  (get-in ordre [:bestilling :handlinger]))
 
 (defn find-kunde-abonnementer [kundeid]
-  abonnementer)
+  @abonnementer)
 
-(defn ordre [kundeid]
-  (prn "BUH")
-  (let [c (chan)
-        ordrer (find-kunde-ordrer kundeid)
-        _ (prn ordrer)
-        abons @(find-kunde-abonnementer kundeid)
-        _ (prn abons)]
-    (prn ordrer abons)
-    (loop [res [] i 0]
-      (if (and (not= i 0) (empty? (filter #(= :ok %) res)))
-        (do (prn "BLAAAA" res i)
-            (close! c))
-        (do (prn "TEST" res i)
-            (recur (mapv <!! (map #(step % c kundeid ordrer abons) all-steps)) (inc i)))))))
+(defn order [kundeid]
+  (let [l (count all-steps)
+        ordrer (find-kunde-ordrer kundeid)]
+    (loop [res []]
+      (if (and (empty? (filter #(= :ok %) res)) (= (count res) l))
+        nil
+        (recur (pmap #(step! % kundeid ordrer (find-kunde-abonnementer kundeid)) all-steps))))))
 
 (def ordre (clojure.walk/keywordize-keys {"id" "2950aa52-f3ac-4f64-9d3b-922ac35adfdb"
-             "bestilling" {"kundeid" "606125929"
-                           "handlinger" [{"index" 0
-                                          "handling" "SKIFT-PRODUKT"
-                                          "handlingsdato" "06-02-2013"
-                                          "varenr" "1401009"
-                                          "aftaletype" "tlf"
-                                          "pg-type" "ga"
-                                          "hw" false
-                                          "tekniker" false
-                                          "abonnementsid" "20000135"
-                                          "installation" {"amsid" "452232"
-                                                          "instnr" "155671"}}
-                                         {"varenr" "1417015"
-                                          "handling" "OPRET"
-                                          "aftaletype" "tlf"
-                                          "pg-type" "ky"
-                                          "hw" true
-                                          "tekniker" false
-                                          "installation" {"amsid" "452232"
-                                                          "instnr" "155671"}
-                                          "index" 1
-                                          "aftalenr" "1101927"}
-                                         ]
-                           "info" {"betaler-brev" false
-                                   "klient-funktion" "k2uiBestil"
-                                   "juridisk-brev" true
-                                   "salgskanal" "K"
-                                   "klient-system" "SPOC"
-                                   "overstyret-salgskanal" "K"
-                                   "klient-bruger" "a65973"
-                                   "ordre-kvittering-email" "youseekvitteringer@gmail.com"}}
-             "status" "Afsluttet"
-             "ordredato" "06-02-2013"
-             "version" "3.0"
-             "k2orderid" "S01TSPOC----------------79959793"}))
+                                          "bestilling" {"kundeid" "606125929"
+                                                        "handlinger" [{"index" 0
+                                                                       "handling" "SKIFT"
+                                                                       "handlingsdato" "03-10-2013"
+                                                                       "ordredato" "03-02-2013"
+                                                                       "varenr" "1401009"
+                                                                       "aftaletype" "tlf"
+                                                                       "pg-type" "ga"
+                                                                       "hw" false
+                                                                       "tekniker" false
+                                                                       "abonnementsid" "20000135"
+                                                                       "installation" {"amsid" "452232"
+                                                                                       "instnr" "155671"}}
+                                                                      {"varenr" "1417015"
+                                                                       "handling" "OPRET"
+                                                                       "handlingsdato" "03-10-2013"
+                                                                       "ordredato" "06-02-2013"
+                                                                       "aftaletype" "tlf"
+                                                                       "pg-type" "ky"
+                                                                       "hw" true
+                                                                       "tekniker" false
+                                                                       "installation" {"amsid" "452232"
+                                                                                       "instnr" "155671"}
+                                                                       "index" 1
+                                                                       "aftalenr" "1101927"}
+                                                                      {"varenr" "1317015"
+                                                                       "handling" "OPRET"
+                                                                       "handlingsdato" "03-10-2013"
+                                                                       "ordredato" "06-02-2013"
+                                                                       "aftaletype" "bb"
+                                                                       "pg-type" "ga"
+                                                                       "hw" true
+                                                                       "tekniker" false
+                                                                       "installation" {"amsid" "452232"
+                                                                                       "instnr" "155671"}
+                                                                       "index" 3
+                                                                       "aftalenr" "1301927"}
+                                                                      ]
+                                                        "info" {"betaler-brev" false
+                                                                "klient-funktion" "k2uiBestil"
+                                                                "juridisk-brev" true
+                                                                "salgskanal" "K"
+                                                                "klient-system" "SPOC"
+                                                                "overstyret-salgskanal" "K"
+                                                                "klient-bruger" "a65973"
+                                                                "ordre-kvittering-email" "youseekvitteringer@gmail.com"}}
+                                          "status" "Afsluttet"
+                                          "ordredato" "06-02-2013"
+                                          "version" "3.0"
+                                          "k2orderid" "S01TSPOC----------------79959793"}))
 
 (def abonnementer (atom [{:varenr "1101201"
                           :aftaletype "clear"
                           :pg-type "ga"
                           :status "aktiv"
                           :abonnementsid "20000101"}
-                         {:varenr "1301201"
-                          :aftaletype "bb"
+                         ;; {:varenr "1301201"
+                         ;;  :aftaletype "bb"
+                         ;;  :pg-type "ga"
+                         ;;  :status "aktiv"
+                         ;;  :abonnementsid "20000102"}
+                         {:varenr "1401201"
+                          :aftaletype "tlf"
                           :pg-type "ga"
                           :status "aktiv"
-                          :abonnementsid "20000102"}]))
+                          :abonnementsid "20000103"}]))
 
 (defn test []
   (let [c (chan)]

@@ -1,4 +1,4 @@
-(defproject orderrules "0.1.0-SNAPSHOT"
+(defproject orderrules "0.1.0"
   :description "FIXME: write description"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
@@ -6,4 +6,5 @@
   :dependencies [[org.clojure/clojure "1.5.1"]
                  [org.clojure/core.logic "0.8.4"]
                  [clj-time "0.6.0"]
-                 [org.clojure/core.async "0.1.222.0-83d0c2-alpha"]])
+                 [org.clojure/core.async "0.1.222.0-83d0c2-alpha"]
+                 [expectations "1.4.56"]])
