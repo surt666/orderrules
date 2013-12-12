@@ -216,7 +216,7 @@
                                                                        "aftalenr" "1101927"}
                                                                       {"varenr" "1317015"
                                                                        "handling" "OPRET"
-                                                                       "handlingsdato" "03-10-2013"
+                                                                       "handlingsdato" "04-10-2013"
                                                                        "ordredato" "06-02-2013"
                                                                        "aftaletype" "bb"
                                                                        "pg-type" "ga"

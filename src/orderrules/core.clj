@@ -14,7 +14,7 @@
 (fact needs "tlf" "bb")
 (fact needs "youbio" nil)
 
-(defrel canstart fo neededfostatus)
+(defrel canstart fo neededfostatus) ;; neededfostatus is the neededfo from needs rel
 (fact canstart "clear" "aktiv")
 (fact canstart "clear" "kunsignal")
 (fact canstart "youbio" nil)
@@ -69,6 +69,8 @@
 (fact handlingsdato "dtv" "opret" 3 true false)
 (fact handlingsdato "dtv" "skift" 0 false false)
 (fact handlingsdato "dtv" "opsig" :first-day-next-month false false)
+(fact handlingsdato "youbio" "opret" 0 false false)
+(fact handlingsdato "youbio" "opsig" :first-day-next-month false false)
 
 (defn handlingsdato-ok? [o nu]
   (let [hdt (f/parse custom-formatter (:handlingsdato o))
@@ -86,8 +88,8 @@
       (do ;(prn "HD2" tid)
           [false tid]))))
 
-(defn provision-subscription? [o al & [idag]]
-  (let [nu (if idag (f/parse custom-formatter idag) (l/local-now))]
+(defn provision-subscription? [o al & [dag]]
+  (let [nu (if dag (f/parse custom-formatter dag) (l/local-now))]
     (= '(_0) (run 1 [q]
                  (fresh [needed status]
                         (conde
