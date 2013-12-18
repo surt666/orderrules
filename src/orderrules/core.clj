@@ -101,7 +101,7 @@
                         (canstart needed status)
                         )))))
 
-(defrel transition aarsag tilstand nytilstand cos)
+(defrel transition aarsag tilstand nytilstand cos krediter)
 (comment
   \                           tilstand
    \                |     NA     | afventer  |  kunsignal   |   kunplan    |    aktiv     | underlukning |  lukket  |
@@ -114,25 +114,31 @@
  g genåbn           |            |           |              |              |              |  aktiv       | aktiv    |
    billaktiv        |            | kunplan   |   aktiv      |              |              |              |          |
    saldomaxluk      |            |           |              |              |  aktiv+cos-  |              |          |
-   saldomaxåben     |            |           |              |              |  aktiv+cos+  |              |          |)
+   saldomaxåben     |            |           |              |              |  aktiv+cos+  |              |          |
+   annuller         |            |  lukket   |   lukket     |   lukket     |   lukket     |   aktiv?     |          |)
 
-(fact transition "opret" nil "afventer" nil)
-(fact transition "skift" "aktiv" "aktiv" nil)
-(fact transition "luk" "afventer" "lukket" nil)
-(fact transition "luk" "kunsignal" "underlukning" nil)
-(fact transition "luk" "kunplan" "underlukning" nil)
-(fact transition "luk" "aktiv" "underlukning" nil)
-(fact transition "provisioneret" "afventer" "kunsignal" nil)
-(fact transition "provisioneret" "kunplan" "aktiv" nil)
-(fact transition "afprovisioneret" "aktiv" "kunplan" nil)
-(fact transition "afprovisioneret" "underlukning" "lukket" nil)
-(fact transition "genåbn" "underlukning" "aktiv" nil)
-(fact transition "genåbn" "lukket" "aktiv" nil)
-(fact transition "saldomaxluk" "aktiv" "aktiv" "4")
-(fact transition "saldomaxåben" "aktiv" "aktiv" "2")
+(fact transition "opret" nil "afventer" nil false)
+(fact transition "skift" "aktiv" "aktiv" nil false)
+(fact transition "luk" "afventer" "lukket" nil false)
+(fact transition "luk" "kunsignal" "underlukning" nil false)
+(fact transition "luk" "kunplan" "underlukning" nil false)
+(fact transition "luk" "aktiv" "underlukning" nil false)
+(fact transition "provisioneret" "afventer" "kunsignal" nil false)
+(fact transition "provisioneret" "kunplan" "aktiv" nil false)
+(fact transition "afprovisioneret" "aktiv" "kunplan" nil false)
+(fact transition "afprovisioneret" "underlukning" "lukket" nil false)
+(fact transition "genåbn" "underlukning" "aktiv" nil false)
+(fact transition "genåbn" "lukket" "aktiv" nil false)
+(fact transition "saldomaxluk" "aktiv" "aktiv" "4" false)
+(fact transition "saldomaxåben" "aktiv" "aktiv" "2" false)
+(fact transition "annuller" "afventer" "lukket" nil false)
+(fact transition "annuller" "kunsignal" "lukket" nil false)
+(fact transition "annuller" "kunplan" "lukket" nil true)
+(fact transition "annuller" "aktiv" "lukket" nil true)
+(fact transition "annuller" "underlukning" "aktiv" nil false)
 
 (defn trans [aarsag tilstand]
   (run 1 [q]
-       (fresh [ny cos]
-              (== q [ny cos])
-              (transition aarsag tilstand ny cos))))
+       (fresh [ny cos krediter]
+              (== q [ny cos krediter])
+              (transition aarsag tilstand ny cos krediter))))
