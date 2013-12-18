@@ -100,3 +100,39 @@
                         (hdok (get (handlingsdato-ok? o nu) 0))
                         (canstart needed status)
                         )))))
+
+(defrel transition aarsag tilstand nytilstand cos)
+(comment
+  \                           tilstand
+   \                |     NA     | afventer  |  kunsignal   |   kunplan    |    aktiv     | underlukning |  lukket  |
+    ----------------|------------|-----------|--------------|--------------|--------------|--------------|----------|
+ a opret            | afventer   |           |              |              |              |              |          |
+ a skift            |            |           |              |              |   aktiv      |              |          |
+ r luk              |            |  lukket   | underlukning | underlukning | underlukning |              |          |
+ s provisioneret    |            | kunsignal |              |   aktiv      |              |              |          |
+ a afprovisioneret  |            |           |              |              |  kunplan     |  lukket      |          |
+ g genåbn           |            |           |              |              |              |  aktiv       | aktiv    |
+   billaktiv        |            | kunplan   |   aktiv      |              |              |              |          |
+   saldomaxluk      |            |           |              |              |  aktiv+cos-  |              |          |
+   saldomaxåben     |            |           |              |              |  aktiv+cos+  |              |          |)
+
+(fact transition "opret" nil "afventer" nil)
+(fact transition "skift" "aktiv" "aktiv" nil)
+(fact transition "luk" "afventer" "lukket" nil)
+(fact transition "luk" "kunsignal" "underlukning" nil)
+(fact transition "luk" "kunplan" "underlukning" nil)
+(fact transition "luk" "aktiv" "underlukning" nil)
+(fact transition "provisioneret" "afventer" "kunsignal" nil)
+(fact transition "provisioneret" "kunplan" "aktiv" nil)
+(fact transition "afprovisioneret" "aktiv" "kunplan" nil)
+(fact transition "afprovisioneret" "underlukning" "lukket" nil)
+(fact transition "genåbn" "underlukning" "aktiv" nil)
+(fact transition "genåbn" "lukket" "aktiv" nil)
+(fact transition "saldomaxluk" "aktiv" "aktiv" "4")
+(fact transition "saldomaxåben" "aktiv" "aktiv" "2")
+
+(defn trans [aarsag tilstand]
+  (run 1 [q]
+       (fresh [ny cos]
+              (== q [ny cos])
+              (transition aarsag tilstand ny cos))))
