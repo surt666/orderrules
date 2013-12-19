@@ -110,7 +110,6 @@
       :done))
 
 (defn opret-clear-abon-ga-afventer-step [kundeid ordrer abons]
-  (prn "Clear")
   (Thread/sleep (rand-int 1000))
   (let [o (extract-order ordrer "clear" "ga")
         ga-abon (extract-abonnement abons "clear" "ga" (:varenr o))]
@@ -189,33 +188,19 @@
         nil
         (recur (pmap #(step! % kundeid ordrer (find-kunde-abonnementer kundeid)) all-steps))))))
 
-(defn async-order [kundeid ordrer abons out-ch]
-  (let [ch1 (chan)
-        ch2 (chan)
-        ch3 (chan)
-        ch4 (chan)
-        ch5 (chan)
-        ch6 (chan)
-        ch7 (chan)
-        ch8 (chan)
-        ch9 (chan)
-        ch10 (chan)
-        ch11 (chan)
-        ch12 (chan)]
-    (go (>! ch1 (opret-clear-abon-ga-afventer-step kundeid ordrer abons)))
-    (go (>! ch2 (opret-bb-abon-ga-afventer-step kundeid ordrer abons)))
-    (go (>! ch3 (opret-tlf-abon-ga-afventer-step kundeid ordrer abons)))
-    (go (>! ch4 (provisioner-bb-ga-abon-step kundeid ordrer abons)))
-    (go (>! ch5 (provisioner-tlf-ga-abon-step kundeid ordrer abons)))
-    (go (>! ch6 (skift-tlf-ga-abon-step kundeid ordrer abons)))
-    (go (>! ch7 (aktiver-clear-abon-ga-step kundeid ordrer abons)))
-    (go (>! ch8 (aktiver-bb-abon-ga-step kundeid ordrer abons)))
-    (go (>! ch9 (aktiver-tlf-abon-ga-step kundeid ordrer abons)))
-    (go (>! ch10 (opret-tlf-ky-hw kundeid ordrer abons)))
-    (go (>! ch11 (opret-bb-ky-hw kundeid ordrer abons)))
-    (go (>! ch12 (opret-tlf-ky-fakturering kundeid ordrer abons)))
-    (vector (<!! ch1)  (<!! ch2) (<!! ch3) (<!! ch4) (<!! ch5) (<!! ch6) (<!! ch7) (<!! ch8) (<!! ch9) (<!! ch10) (<!! ch11) (<!! ch12))
-          ))
+(defn async-order [kundeid ordrer abons channels]
+  (go (>! (get channels 0) (opret-clear-abon-ga-afventer-step kundeid ordrer abons)))
+  (go (>! (get channels 1) (opret-bb-abon-ga-afventer-step kundeid ordrer abons)))
+  (go (>! (get channels 2) (opret-tlf-abon-ga-afventer-step kundeid ordrer abons)))
+  (go (>! (get channels 3) (provisioner-bb-ga-abon-step kundeid ordrer abons)))
+  (go (>! (get channels 4) (provisioner-tlf-ga-abon-step kundeid ordrer abons)))
+  (go (>! (get channels 5) (skift-tlf-ga-abon-step kundeid ordrer abons)))
+  (go (>! (get channels 6) (aktiver-clear-abon-ga-step kundeid ordrer abons)))
+  (go (>! (get channels 7) (aktiver-bb-abon-ga-step kundeid ordrer abons)))
+  (go (>! (get channels 8) (aktiver-tlf-abon-ga-step kundeid ordrer abons)))
+  (go (>! (get channels 9) (opret-tlf-ky-hw kundeid ordrer abons)))
+  (go (>! (get channels 10) (opret-bb-ky-hw kundeid ordrer abons)))
+  (go (>! (get channels 11) (opret-tlf-ky-fakturering kundeid ordrer abons))))
 
 
 
@@ -296,15 +281,12 @@
       (let [val (<! c)]
         val)))))
 
-
 (defn demo []
-  (let [in-ch (chan)
-        out-ch (chan)]
-
-    (loop [res [:ok]]
-      (if (empty? (filter #(= :ok %) res))
-        res
-        (recur (async-order "606125929" (get-in ordre [:bestilling :handlinger]) (find-kunde-abonnementer "606125929") out-ch))
-        ))
-
-    ))
+  (loop [res [:ok] oldchannels []]
+    (if (empty? (filter #(= :ok %) res))
+      res
+      (let [channels (mapv chan (range 12))
+            _ (async-order "606125929" (get-in ordre [:bestilling :handlinger]) (find-kunde-abonnementer "606125929") channels)
+            nyres (mapv <!! channels)]
+        (mapv close! oldchannels)
+        (recur nyres channels)))))
