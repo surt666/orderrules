@@ -188,19 +188,10 @@
         nil
         (recur (pmap #(step! % kundeid ordrer (find-kunde-abonnementer kundeid)) all-steps))))))
 
+(def steps [opret-clear-abon-ga-afventer-step opret-bb-abon-ga-afventer-step opret-tlf-abon-ga-afventer-step provisioner-bb-ga-abon-step provisioner-tlf-ga-abon-step skift-tlf-ga-abon-step aktiver-clear-abon-ga-step aktiver-bb-abon-ga-step aktiver-tlf-abon-ga-step opret-tlf-ky-hw opret-bb-ky-hw opret-tlf-ky-fakturering])
+
 (defn async-order [kundeid ordrer abons channels]
-  (go (>! (get channels 0) (opret-clear-abon-ga-afventer-step kundeid ordrer abons)))
-  (go (>! (get channels 1) (opret-bb-abon-ga-afventer-step kundeid ordrer abons)))
-  (go (>! (get channels 2) (opret-tlf-abon-ga-afventer-step kundeid ordrer abons)))
-  (go (>! (get channels 3) (provisioner-bb-ga-abon-step kundeid ordrer abons)))
-  (go (>! (get channels 4) (provisioner-tlf-ga-abon-step kundeid ordrer abons)))
-  (go (>! (get channels 5) (skift-tlf-ga-abon-step kundeid ordrer abons)))
-  (go (>! (get channels 6) (aktiver-clear-abon-ga-step kundeid ordrer abons)))
-  (go (>! (get channels 7) (aktiver-bb-abon-ga-step kundeid ordrer abons)))
-  (go (>! (get channels 8) (aktiver-tlf-abon-ga-step kundeid ordrer abons)))
-  (go (>! (get channels 9) (opret-tlf-ky-hw kundeid ordrer abons)))
-  (go (>! (get channels 10) (opret-bb-ky-hw kundeid ordrer abons)))
-  (go (>! (get channels 11) (opret-tlf-ky-fakturering kundeid ordrer abons))))
+  (mapv #(go (>! %2 (apply %1 [kundeid ordrer abons]))) steps channels))
 
 
 
@@ -281,12 +272,18 @@
       (let [val (<! c)]
         val)))))
 
+(defn handle-order [in-ch]
+  (let [data (<!! in-ch)]
+    (loop [res [:ok] oldchannels []]
+     (if (empty? (filter #(= :ok %) res))
+       res
+       (let [channels (mapv chan (range (count steps)))
+             _ (apply async-order [(get data 0) (get-in (get data 1) [:bestilling :handlinger]) (find-kunde-abonnementer (get data 0)) channels])
+             nyres (mapv <!! channels)]
+         (mapv close! oldchannels)
+         (recur nyres channels))))))
+
 (defn demo []
-  (loop [res [:ok] oldchannels []]
-    (if (empty? (filter #(= :ok %) res))
-      res
-      (let [channels (mapv chan (range 12))
-            _ (async-order "606125929" (get-in ordre [:bestilling :handlinger]) (find-kunde-abonnementer "606125929") channels)
-            nyres (mapv <!! channels)]
-        (mapv close! oldchannels)
-        (recur nyres channels)))))
+  (let [in-ch (chan)]
+    (go (>! in-ch ["606125929" ordre]))
+    (handle-order in-ch)))
