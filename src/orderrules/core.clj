@@ -96,8 +96,7 @@
                              [(== needed nil)])
                             (needs (:aftaletype o) needed)
                             (hdok (get (handlingsdato-ok? o nu) 0))
-                            (canstart needed status)
-                            )))))))
+                            (canstart needed status))))))))
 
 (comment
   \                                                         tilstand

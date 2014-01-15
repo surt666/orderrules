@@ -1,6 +1,6 @@
 (ns orderrules.flow
   (:require [orderrules.core :refer :all]
-            [clojure.core.async :refer (<! <!! >! >!! go chan close!)]
+            [clojure.core.async :refer (<! <!! >! >!! go chan close! put!)]
             [clj-time.core :as c]
             [clj-time.format :as f]
             [clj-time.local :as l]))
@@ -58,7 +58,6 @@
     (if (and can-provision? (:hw ordre) (nil? ydelse))
       (bestil-hw ordre)
       :done)))
-
 (defn fakturer-ydelse-ordre [ordre abons]
   (let [nu (l/local-now)
         hd (when (:handlingsdato ordre) (f/parse custom-formatter (:handlingsdato ordre)))
@@ -200,6 +199,26 @@
 
 (def steps [opret-clear-abon-ga-afventer-step opret-bb-abon-ga-afventer-step opret-tlf-abon-ga-afventer-step provisioner-bb-ga-abon-step provisioner-tlf-ga-abon-step skift-tlf-ga-abon-step aktiver-clear-abon-ga-step aktiver-bb-abon-ga-step aktiver-tlf-abon-ga-step opret-tlf-ky-hw opret-bb-ky-hw opret-tlf-ky-fakturering luk-tlf-abon-ga-step])
 
+(def channels (repeatedly (count steps) chan))
+
+(defn put-ordre-on-all-channels [ordre]
+  (mapv #(put! % ordre) channels))
+
+(defn async-order2 [func channel]
+  (go
+   (while true
+     (let [ordre (<! channel)
+           kundeid (get-in ordre [:bestilling :kundeid])
+           ordrelinier (get-in ordre [:bestilling :handlinger])
+           abonnementer (find-kunde-abonnementer kundeid)
+           res (apply func [kundeid ordrelinier abonnementer])]
+       (when (= res :ok)
+         (put-ordre-on-all-channels ordre))))))
+
+(defn start-go-blocks []
+  (mapv #(async-order2 %1 %2) steps channels))
+
+
 (defn async-order [kundeid ordrer abons]
   (mapv #(go (apply %1 [kundeid ordrer abons])) steps))
 
@@ -207,7 +226,7 @@
                                           "bestilling" {"kundeid" "606125929"
                                                         "handlinger" [{"index" 0
                                                                        "handling" "SKIFT"
-                                                                       "handlingsdato" "09-02-2014"
+                                                                       "handlingsdato" "09-01-2014"
                                                                        "ordredato" "03-01-2014"
                                                                        "varenr" "1401009"
                                                                        "aftaletype" "tlf"
@@ -219,8 +238,8 @@
                                                                                        "instnr" "155671"}}
                                                                       {"varenr" "1417015"
                                                                        "handling" "OPRET"
-                                                                       "handlingsdato" "03-02-2014"
-                                                                       "ordredato" "06-02-2013"
+                                                                       "handlingsdato" "03-01-2014"
+                                                                       "ordredato" "06-01-2013"
                                                                        "aftaletype" "tlf"
                                                                        "pg-type" "ky"
                                                                        "hw" true
