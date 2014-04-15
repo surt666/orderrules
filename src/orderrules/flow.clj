@@ -199,35 +199,21 @@
 
 (def steps [opret-clear-abon-ga-afventer-step opret-bb-abon-ga-afventer-step opret-tlf-abon-ga-afventer-step provisioner-bb-ga-abon-step provisioner-tlf-ga-abon-step skift-tlf-ga-abon-step aktiver-clear-abon-ga-step aktiver-bb-abon-ga-step aktiver-tlf-abon-ga-step opret-tlf-ky-hw opret-bb-ky-hw opret-tlf-ky-fakturering luk-tlf-abon-ga-step])
 
-(def channels (repeatedly (count steps) chan))
-
-(defn put-ordre-on-all-channels [ordre]
-  (mapv #(put! % ordre) channels))
-
-(defn async-order2 [func channel]
-  (go
-   (while true
-     (let [ordre (<! channel)
-           kundeid (get-in ordre [:bestilling :kundeid])
-           ordrelinier (get-in ordre [:bestilling :handlinger])
-           abonnementer (find-kunde-abonnementer kundeid)
-           res (apply func [kundeid ordrelinier abonnementer])]
-       (when (= res :ok)
-         (put-ordre-on-all-channels ordre))))))
-
-(defn start-go-blocks []
-  (mapv #(async-order2 %1 %2) steps channels))
-
-
 (defn async-order [kundeid ordrer abons]
-  (mapv #(go (apply %1 [kundeid ordrer abons])) steps))
+  (clojure.core.async/merge
+   (mapv #(let [co (chan)]
+            (go
+              (>! co (apply %1 [kundeid ordrer abons]))
+              (close! co))
+            co)
+         steps)))
 
 (def ordre (clojure.walk/keywordize-keys {"id" "2950aa52-f3ac-4f64-9d3b-922ac35adfdb"
                                           "bestilling" {"kundeid" "606125929"
                                                         "handlinger" [{"index" 0
                                                                        "handling" "SKIFT"
                                                                        "handlingsdato" "09-01-2014"
-                                                                       "ordredato" "03-01-2014"
+                                                                       "ordredato" "03-03-2014"
                                                                        "varenr" "1401009"
                                                                        "aftaletype" "tlf"
                                                                        "pg-type" "ga"
@@ -312,10 +298,11 @@
   (loop [res [:ok]]
     (if (empty? (filter #(= :ok %) res))
       res
-      (let [channels (apply async-order [(get data 0) (get-in (get data 1) [:bestilling :handlinger]) (find-kunde-abonnementer (get data 0))])
-            nyres (mapv <!! channels)]
-        (prn "R" nyres)
-        (mapv close! channels)
+      (let [channel (apply async-order [(get data 0) (get-in (get data 1) [:bestilling :handlinger]) (find-kunde-abonnementer (get data 0))])
+            nyres (loop [v (<!! channel) r []]
+                    (if (nil? v)
+                      r
+                      (recur (<!! channel) (conj r v))))]
         (recur nyres)))))
 
 (defn demo []
